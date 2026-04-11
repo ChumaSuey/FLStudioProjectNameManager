@@ -180,6 +180,7 @@ class App(ctk.CTk):
         self.configure(fg_color=BG_DARK)
 
         self.projects: list[FLProject] = []
+        self._search_timer = None
         self._build_ui()
 
     # ── UI construction ──────────────────────────────────────────────────
@@ -326,7 +327,7 @@ class App(ctk.CTk):
 
         # Search
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self._apply_filter())
+        self.search_var.trace_add("write", self._on_search_change)
         search_entry = ctk.CTkEntry(
             filter_bar,
             textvariable=self.search_var,
@@ -354,6 +355,11 @@ class App(ctk.CTk):
 
         # Welcome placeholder
         self._show_welcome()
+
+    def _on_search_change(self, *args):
+        if self._search_timer is not None:
+            self.after_cancel(self._search_timer)
+        self._search_timer = self.after(300, self._apply_filter)
 
     # ── Welcome screen ───────────────────────────────────────────────────
     def _show_welcome(self):
@@ -430,6 +436,10 @@ class App(ctk.CTk):
         if self.projects:
             self.export_btn.configure(state="normal")
 
+        # Store original index so it persists through search/filter
+        for i, project in enumerate(self.projects, start=1):
+            project._original_index = i
+
         self._apply_filter()
 
     def _apply_filter(self):
@@ -465,7 +475,7 @@ class App(ctk.CTk):
             ).grid(row=0, column=0, pady=60)
         else:
             for i, project in enumerate(filtered, start=1):
-                card = ProjectCard(self.scroll_frame, project, i)
+                card = ProjectCard(self.scroll_frame, project, project._original_index)
                 card.grid(row=i, column=0, sticky="ew", padx=4, pady=4)
 
         # Stats
@@ -475,6 +485,7 @@ class App(ctk.CTk):
         self.stats_label.configure(
             text=f"📁 {total} projects  •  ✅ {named} named  •  ⚠️ {unnamed} unnamed  •  Showing {len(filtered)}"
         )
+        self.update_idletasks()
 
     def _export_excel(self):
         if not self.projects:

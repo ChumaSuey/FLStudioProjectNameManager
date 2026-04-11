@@ -25,6 +25,9 @@ env/
 Thumbs.db
 desktop.ini
 
+# Test py file
+test.py
+
 # Project test files
 test_projects/
 test_output.xlsx

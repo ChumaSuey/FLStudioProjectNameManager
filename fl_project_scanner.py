@@ -73,10 +73,19 @@ def scan_directory(root_path: str, depth: int = 1) -> List[FLProject]:
     if not root.is_dir():
         return projects
 
+    def _should_include(proj: FLProject, current_path: Path) -> bool:
+        if proj.flp_files or proj.audio_files:
+            return True
+        # Include if it's completely empty (a placeholder project folder)
+        try:
+            return not any(current_path.iterdir())
+        except PermissionError:
+            return False
+
     if depth == 0:
         # Scan the root itself as a project
         project = _scan_single_folder(root)
-        if project.flp_files:
+        if _should_include(project, root):
             projects.append(project)
         return projects
 
@@ -84,7 +93,7 @@ def scan_directory(root_path: str, depth: int = 1) -> List[FLProject]:
         if entry.is_dir():
             # Check this directory
             project = _scan_single_folder(entry)
-            if project.flp_files:
+            if _should_include(project, entry):
                 projects.append(project)
             # Recurse if depth allows
             elif depth > 1:
@@ -104,12 +113,23 @@ def scan_directory_recursive(root_path: str, max_depth: int = 5) -> List[FLProje
     if not root.is_dir():
         return projects
 
+    def _should_include(proj: FLProject, current_path: Path) -> bool:
+        if proj.flp_files or proj.audio_files:
+            return True
+        try:
+            return not any(current_path.iterdir())
+        except PermissionError:
+            return False
+
     def _walk(current: Path, current_depth: int):
         if current_depth > max_depth:
             return
         project = _scan_single_folder(current)
-        if project.flp_files:
+        
+        should_include = _should_include(project, current)
+        if should_include:
             projects.append(project)
+            
         try:
             for child in sorted(current.iterdir()):
                 if child.is_dir():
