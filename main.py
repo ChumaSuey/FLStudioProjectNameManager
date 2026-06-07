@@ -1,23 +1,30 @@
 """
 FL Studio Project Name Manager
-Main GUI application — built with CustomTkinter.
+Main GUI application — built with standard Tkinter and TTK.
 """
 
 import os
 import sys
 import threading
 from pathlib import Path
-from tkinter import filedialog, messagebox
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
-import customtkinter as ctk
+# ── DPI Awareness (Windows) ──────────────────────────────────────────────────
+if sys.platform.startswith("win"):
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 from fl_project_scanner import FLProject, scan_directory, scan_directory_recursive
 from excel_exporter import export_to_excel
 
 
-# ── Appearance ───────────────────────────────────────────────────────────────
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("dark-blue")
 
 # ── Color palette ────────────────────────────────────────────────────────────
 BG_DARK       = "#0F0F1A"
@@ -34,62 +41,282 @@ TEXT_SECONDARY = "#8D8DA0"
 BORDER_SUBTLE  = "#2A2A42"
 
 
-class ProjectCard(ctk.CTkFrame):
+class ScrollableFrame(tk.Frame):
+    """A standard Tkinter frame with a scrollbar, mimicking CTkScrollableFrame."""
+    
+    def __init__(self, container, bg=BG_DARK, *args, **kwargs):
+        super().__init__(container, bg=bg, *args, **kwargs)
+        
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self, bg=bg)
+        
+        self.scrollable_frame_id = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel events when mouse enters and unbind when mouse leaves
+        self.canvas.bind("<Enter>", self._bind_mousewheel)
+        self.canvas.bind("<Leave>", self._unbind_mousewheel)
+        self.scrollable_frame.bind("<Enter>", self._bind_mousewheel)
+        self.scrollable_frame.bind("<Leave>", self._unbind_mousewheel)
+
+    def _on_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        # Stretch inner frame to match canvas width
+        self.canvas.itemconfig(self.scrollable_frame_id, width=event.width)
+
+    def _bind_mousewheel(self, event):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event):
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+
+    def _on_mousewheel(self, event):
+        if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5 or (hasattr(event, 'delta') and event.delta < 0):
+            self.canvas.yview_scroll(1, "units")
+        elif hasattr(event, 'delta'):
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+class FilterToggleBar(tk.Frame):
+    """A row of mutually-exclusive toggle buttons for filtering."""
+
+    def __init__(self, master, labels, variable, command=None, **kwargs):
+        super().__init__(master, bg=BG_DARK, **kwargs)
+        self.variable = variable
+        self.command = command
+        self.buttons: dict[str, tk.Label] = {}
+
+        for label in labels:
+            btn = tk.Label(
+                self,
+                text=label,
+                font=("Segoe UI", 11),
+                fg=TEXT_SECONDARY,
+                bg=BG_DARK,
+                padx=14,
+                pady=5,
+                cursor="hand2",
+            )
+            btn.pack(side="left", padx=(0, 4))
+            btn.bind("<Button-1>", lambda e, l=label: self._select(l))
+            btn.bind("<Enter>", lambda e, b=btn, l=label: self._on_enter(b, l))
+            btn.bind("<Leave>", lambda e, b=btn, l=label: self._on_leave(b, l))
+            self.buttons[label] = btn
+
+        # Highlight the initial selection
+        self._highlight(variable.get())
+
+    def _select(self, label):
+        self.variable.set(label)
+        self._highlight(label)
+        if self.command:
+            self.command()
+
+    def _highlight(self, active_label):
+        for label, btn in self.buttons.items():
+            if label == active_label:
+                btn.configure(bg=ACCENT, fg=TEXT_PRIMARY)
+            else:
+                btn.configure(bg=BG_DARK, fg=TEXT_SECONDARY)
+
+    def _on_enter(self, btn, label):
+        if self.variable.get() != label:
+            btn.configure(bg=BORDER_SUBTLE)
+
+    def _on_leave(self, btn, label):
+        if self.variable.get() != label:
+            btn.configure(bg=BG_DARK)
+
+
+class HoverButton(tk.Button):
+    """A flat styled tk.Button with hover effects."""
+    
+    def __init__(self, master, text, bg, active_bg, fg=TEXT_PRIMARY, font=("Segoe UI", 11, "bold"), command=None, **kwargs):
+        super().__init__(
+            master,
+            text=text,
+            bg=bg,
+            fg=fg,
+            activebackground=active_bg,
+            activeforeground=fg,
+            font=font,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            command=command,
+            cursor="hand2",
+            **kwargs
+        )
+        self.default_bg = bg
+        self.active_bg = active_bg
+        self.disabled_bg = "#2D2D3F"
+        self.disabled_fg = "#6D6D7F"
+        
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+
+    def _on_enter(self, event):
+        if self["state"] == "normal":
+            self.configure(bg=self.active_bg)
+
+    def _on_leave(self, event):
+        if self["state"] == "normal":
+            self.configure(bg=self.default_bg)
+            
+    def configure(self, **kwargs):
+        if "state" in kwargs:
+            state = kwargs["state"]
+            if state == "disabled":
+                kwargs["bg"] = self.disabled_bg
+                kwargs["fg"] = self.disabled_fg
+            elif state == "normal":
+                kwargs["bg"] = self.default_bg
+                kwargs["fg"] = TEXT_PRIMARY
+        super().configure(**kwargs)
+
+
+class PlaceholderEntry(tk.Entry):
+    """A styled tk.Entry inside a custom Frame to get inner padding and borders."""
+    
+    def __init__(self, master, placeholder_text="", font=("Segoe UI", 11), bg=BG_CARD, fg=TEXT_PRIMARY, border_color=BORDER_SUBTLE, **kwargs):
+        self.frame = tk.Frame(master, bg=bg, highlightthickness=1, highlightbackground=border_color, highlightcolor=ACCENT)
+        
+        super().__init__(
+            self.frame,
+            font=font,
+            bg=bg,
+            fg=fg,
+            insertbackground=fg,
+            relief="flat",
+            bd=0,
+            **kwargs
+        )
+        super().pack(fill="both", expand=True, padx=10, pady=8)
+        
+        self.placeholder_text = placeholder_text
+        self.placeholder_color = TEXT_SECONDARY
+        self.default_color = fg
+        
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
+        
+        self.bind("<FocusIn>", lambda e: [self._on_focus_in(e), self.frame.configure(highlightbackground=ACCENT)], add="+")
+        self.bind("<FocusOut>", lambda e: [self._on_focus_out(e), self.frame.configure(highlightbackground=border_color)], add="+")
+        
+        self._show_placeholder()
+        
+    def _show_placeholder(self):
+        if not super().get() and self.placeholder_text:
+            self.configure(fg=self.placeholder_color)
+            self.insert(0, self.placeholder_text)
+            
+    def _on_focus_in(self, event):
+        if super().get() == self.placeholder_text:
+            self.delete(0, tk.END)
+            self.configure(fg=self.default_color)
+            
+    def _on_focus_out(self, event):
+        if not super().get():
+            self._show_placeholder()
+
+    def get(self):
+        val = super().get()
+        if val == self.placeholder_text:
+            return ""
+        return val
+
+    def set_text(self, text):
+        self.delete(0, tk.END)
+        self.configure(fg=self.default_color)
+        self.insert(0, text)
+        if not text:
+            self._show_placeholder()
+
+    def pack(self, **kwargs):
+        self.frame.pack(**kwargs)
+        
+    def grid(self, **kwargs):
+        self.frame.grid(**kwargs)
+        
+    def place(self, **kwargs):
+        self.frame.place(**kwargs)
+
+
+class ProjectCard(tk.Frame):
     """A visual card representing one FL Studio project folder."""
 
     def __init__(self, master, project: FLProject, index: int, **kwargs):
         super().__init__(
             master,
-            fg_color=BG_CARD,
-            corner_radius=12,
-            border_width=1,
-            border_color=BORDER_SUBTLE,
+            bg=BG_CARD,
+            highlightthickness=1,
+            highlightbackground=BORDER_SUBTLE,
             **kwargs,
         )
         self.project = project
         self.grid_columnconfigure(1, weight=1)
 
         # ── Index badge ──────────────────────────────────────────────────
-        badge = ctk.CTkLabel(
+        badge = tk.Label(
             self,
             text=f"#{index}",
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            text_color=ACCENT_LIGHT,
-            width=42,
+            font=("Segoe UI", 12, "bold"),
+            fg=ACCENT_LIGHT,
+            bg=BG_CARD,
+            width=5,
         )
         badge.grid(row=0, column=0, rowspan=2, padx=(14, 6), pady=12, sticky="n")
 
         # ── Project name ─────────────────────────────────────────────────
-        name_label = ctk.CTkLabel(
+        name_label = tk.Label(
             self,
             text=project.primary_name,
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            text_color=TEXT_PRIMARY,
+            font=("Segoe UI", 15, "bold"),
+            fg=TEXT_PRIMARY,
+            bg=BG_CARD,
             anchor="w",
         )
         name_label.grid(row=0, column=1, padx=(4, 10), pady=(12, 0), sticky="ew")
 
         # ── Folder path (subtitle) ───────────────────────────────────────
-        path_label = ctk.CTkLabel(
+        path_label = tk.Label(
             self,
             text=project.folder_path,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color=TEXT_SECONDARY,
+            font=("Segoe UI", 11),
+            fg=TEXT_SECONDARY,
+            bg=BG_CARD,
             anchor="w",
         )
         path_label.grid(row=1, column=1, padx=(4, 10), pady=(0, 2), sticky="ew")
 
         # ── Details row ──────────────────────────────────────────────────
-        details_frame = ctk.CTkFrame(self, fg_color="transparent")
+        details_frame = tk.Frame(self, bg=BG_CARD)
         details_frame.grid(row=2, column=0, columnspan=3, padx=14, pady=(2, 4), sticky="ew")
 
         # FLP count
         flp_text = f"🎹 {project.project_count} FLP{'s' if project.project_count != 1 else ''}"
-        ctk.CTkLabel(
+        tk.Label(
             details_frame,
             text=flp_text,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color=TEXT_SECONDARY,
+            font=("Segoe UI", 11),
+            fg=TEXT_SECONDARY,
+            bg=BG_CARD,
         ).pack(side="left", padx=(0, 16))
 
         # Separate audio vs MIDI counts
@@ -98,52 +325,57 @@ class ProjectCard(ctk.CTkFrame):
         audio_only = [f for f in project.audio_files if Path(f).suffix.lower() not in midi_exts]
 
         if audio_only:
-            ctk.CTkLabel(
+            tk.Label(
                 details_frame,
                 text=f"🔊 {len(audio_only)} audio",
-                font=ctk.CTkFont(family="Segoe UI", size=11),
-                text_color=SUCCESS,
+                font=("Segoe UI", 11),
+                fg=SUCCESS,
+                bg=BG_CARD,
             ).pack(side="left", padx=(0, 12))
 
         if midi_files:
-            ctk.CTkLabel(
+            tk.Label(
                 details_frame,
                 text=f"🎼 {len(midi_files)} MIDI",
-                font=ctk.CTkFont(family="Segoe UI", size=11),
-                text_color="#00BCD4",
+                font=("Segoe UI", 11),
+                fg="#00BCD4",
+                bg=BG_CARD,
             ).pack(side="left", padx=(0, 12))
 
         # FLP file names (collapsed)
         flp_names = ", ".join(Path(f).stem for f in project.flp_files[:4])
         if len(project.flp_files) > 4:
             flp_names += f" (+{len(project.flp_files) - 4} more)"
-        ctk.CTkLabel(
+        tk.Label(
             details_frame,
             text=flp_names,
-            font=ctk.CTkFont(family="Segoe UI", size=11, slant="italic"),
-            text_color=TEXT_SECONDARY,
+            font=("Segoe UI", 11, "italic"),
+            fg=TEXT_SECONDARY,
+            bg=BG_CARD,
         ).pack(side="left", padx=(0, 10))
 
         # ── Exported file names (prominent) ──────────────────────────────
         if project.audio_files:
-            export_frame = ctk.CTkFrame(self, fg_color="#1E1E38", corner_radius=8)
-            export_frame.grid(row=3, column=0, columnspan=3, padx=14, pady=(0, 12), sticky="ew")
+            self.export_frame = tk.Frame(self, bg="#1E1E38")
+            self.export_frame.grid(row=3, column=0, columnspan=3, padx=14, pady=(0, 12), sticky="ew")
 
-            ctk.CTkLabel(
-                export_frame,
+            tk.Label(
+                self.export_frame,
                 text="📦 Exports:",
-                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                text_color=ACCENT_LIGHT,
+                font=("Segoe UI", 11, "bold"),
+                fg=ACCENT_LIGHT,
+                bg="#1E1E38",
             ).pack(side="left", padx=(10, 6), pady=6)
 
             export_names = ", ".join(project.audio_files[:6])
             if len(project.audio_files) > 6:
                 export_names += f"  (+{len(project.audio_files) - 6} more)"
-            ctk.CTkLabel(
-                export_frame,
+            tk.Label(
+                self.export_frame,
                 text=export_names,
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                text_color=SUCCESS,
+                font=("Segoe UI", 12, "bold"),
+                fg=SUCCESS,
+                bg="#1E1E38",
             ).pack(side="left", padx=(0, 10), pady=6)
 
         # ── Status badge ─────────────────────────────────────────────────
@@ -154,30 +386,97 @@ class ProjectCard(ctk.CTkFrame):
         else:
             status_color = DANGER
 
-        status_label = ctk.CTkLabel(
+        status_label = tk.Label(
             self,
             text=project.status,
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            text_color=status_color,
-            width=90,
+            font=("Segoe UI", 12, "bold"),
+            fg=status_color,
+            bg=BG_CARD,
+            anchor="e",
         )
         status_label.grid(row=0, column=2, rowspan=2, padx=(6, 16), pady=12, sticky="e")
 
         # ── Hover effect ─────────────────────────────────────────────────
-        self.bind("<Enter>", lambda e: self.configure(fg_color=BG_CARD_HOVER, border_color=ACCENT))
-        self.bind("<Leave>", lambda e: self.configure(fg_color=BG_CARD, border_color=BORDER_SUBTLE))
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self._bind_hover_recursive(self)
+
+    def _bind_hover_recursive(self, widget):
+        widget.bind("<Enter>", self._on_enter, add="+")
+        widget.bind("<Leave>", self._on_leave, add="+")
+        for child in widget.winfo_children():
+            self._bind_hover_recursive(child)
+
+    def _on_enter(self, event):
+        self.configure(bg=BG_CARD_HOVER, highlightbackground=ACCENT)
+        self._update_colors(BG_CARD_HOVER)
+
+    def _on_leave(self, event):
+        self.configure(bg=BG_CARD, highlightbackground=BORDER_SUBTLE)
+        self._update_colors(BG_CARD)
+
+    def _update_colors(self, bg_color):
+        export_fr = getattr(self, "export_frame", None)
+        def recurse(w):
+            if export_fr and (w == export_fr or self._is_descendant_of(w, export_fr)):
+                return
+            try:
+                w.configure(bg=bg_color)
+            except tk.TclError:
+                pass
+            for child in w.winfo_children():
+                recurse(child)
+        for child in self.winfo_children():
+            recurse(child)
+
+    def _is_descendant_of(self, widget, ancestor):
+        curr = widget
+        while curr:
+            if curr == ancestor:
+                return True
+            parent_name = curr.winfo_parent()
+            if not parent_name:
+                break
+            curr = curr.nametowidget(parent_name)
+        return False
 
 
-class App(ctk.CTk):
+class App(tk.Tk):
     """Main application window."""
 
     def __init__(self):
         super().__init__()
 
         self.title("FL Studio Project Name Manager")
-        self.geometry("1060x720")
+        
+        # Calculate dynamic window resolution based on screen dimensions
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        width = int(screen_width * 0.6)
+        height = int(screen_height * 0.7)
+        # Ensure sizes remain in reasonable bounds
+        width = max(1000, min(width, 1400))
+        height = max(650, min(height, 900))
+        
+        self.geometry(f"{width}x{height}")
         self.minsize(820, 520)
-        self.configure(fg_color=BG_DARK)
+        self.configure(bg=BG_DARK)
+
+        # Apply dark theme styling to TTK scrollbars using clam
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Vertical.TScrollbar",
+            troughcolor=BG_DARK,
+            background=BORDER_SUBTLE,
+            arrowcolor=TEXT_SECONDARY,
+            bordercolor=BG_DARK,
+            gripcount=0
+        )
+        style.map(
+            "Vertical.TScrollbar",
+            background=[("active", ACCENT), ("pressed", ACCENT_HOVER)]
+        )
 
         self.projects: list[FLProject] = []
         self._search_timer = None
@@ -189,91 +488,78 @@ class App(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
 
         # ── Header ───────────────────────────────────────────────────────
-        header = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=70)
+        header = tk.Frame(self, bg=BG_CARD, height=70)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(
+        tk.Label(
             header,
             text="🎛️  FL Studio Project Name Manager",
-            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
-            text_color=TEXT_PRIMARY,
+            font=("Segoe UI", 22, "bold"),
+            fg=TEXT_PRIMARY,
+            bg=BG_CARD,
         ).grid(row=0, column=0, padx=24, pady=18, sticky="w")
 
         # ── Toolbar ──────────────────────────────────────────────────────
-        toolbar = ctk.CTkFrame(self, fg_color=BG_DARK, height=52)
+        toolbar = tk.Frame(self, bg=BG_DARK, height=52)
         toolbar.grid(row=1, column=0, sticky="ew", padx=20, pady=(14, 0))
         toolbar.grid_columnconfigure(1, weight=1)
 
         # Folder path entry
-        self.path_var = ctk.StringVar()
-        self.path_entry = ctk.CTkEntry(
+        self.path_entry = PlaceholderEntry(
             toolbar,
-            textvariable=self.path_var,
             placeholder_text="Select your FL Studio projects folder…",
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            height=40,
-            corner_radius=10,
-            border_color=BORDER_SUBTLE,
-            fg_color=BG_CARD,
-            text_color=TEXT_PRIMARY,
+            font=("Segoe UI", 12),
         )
         self.path_entry.grid(row=0, column=0, columnspan=2, sticky="ew", padx=(0, 10))
 
         # Browse button
-        self.browse_btn = ctk.CTkButton(
+        self.browse_btn = HoverButton(
             toolbar,
             text="📂  Browse",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            width=120,
-            height=40,
-            corner_radius=10,
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
+            bg=ACCENT,
+            active_bg=ACCENT_HOVER,
             command=self._browse_folder,
         )
-        self.browse_btn.grid(row=0, column=2, padx=(0, 8))
+        self.browse_btn.grid(row=0, column=2, padx=(0, 8), ipady=5, ipadx=10)
 
         # Scan button
-        self.scan_btn = ctk.CTkButton(
+        self.scan_btn = HoverButton(
             toolbar,
             text="🔍  Scan",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            width=110,
-            height=40,
-            corner_radius=10,
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
+            bg=ACCENT,
+            active_bg=ACCENT_HOVER,
             command=self._start_scan,
         )
-        self.scan_btn.grid(row=0, column=3, padx=(0, 8))
+        self.scan_btn.grid(row=0, column=3, padx=(0, 8), ipady=5, ipadx=10)
 
         # Refresh button
-        self.refresh_btn = ctk.CTkButton(
+        self.refresh_btn = HoverButton(
             toolbar,
             text="🔄  Refresh",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            width=120,
-            height=40,
-            corner_radius=10,
-            fg_color="#FF8C00",
-            hover_color="#CC7000",
+            bg="#FF8C00",
+            active_bg="#CC7000",
             command=self._refresh_scan,
             state="disabled",
         )
-        self.refresh_btn.grid(row=0, column=4, padx=(0, 8))
+        self.refresh_btn.grid(row=0, column=4, padx=(0, 8), ipady=5, ipadx=10)
 
         # Recursive toggle
-        self.recursive_var = ctk.BooleanVar(value=False)
-        self.recursive_cb = ctk.CTkCheckBox(
+        self.recursive_var = tk.BooleanVar(value=False)
+        self.recursive_cb = tk.Checkbutton(
             toolbar,
             text="Deep scan",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
+            font=("Segoe UI", 11),
             variable=self.recursive_var,
-            text_color=TEXT_SECONDARY,
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
-            corner_radius=6,
+            fg=TEXT_SECONDARY,
+            bg=BG_DARK,
+            activeforeground=TEXT_PRIMARY,
+            activebackground=BG_DARK,
+            selectcolor=BG_CARD,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            cursor="hand2"
         )
         self.recursive_cb.grid(row=0, column=5, padx=(6, 8))
 
@@ -281,138 +567,121 @@ class App(ctk.CTk):
         self.bind("<F5>", lambda e: self._refresh_scan())
 
         # Export button
-        self.export_btn = ctk.CTkButton(
+        self.export_btn = HoverButton(
             toolbar,
             text="📊  Export Excel",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            width=140,
-            height=40,
-            corner_radius=10,
-            fg_color="#2E7D32",
-            hover_color="#1B5E20",
+            bg="#2E7D32",
+            active_bg="#1B5E20",
             command=self._export_excel,
             state="disabled",
         )
-        self.export_btn.grid(row=0, column=6)
+        self.export_btn.grid(row=0, column=6, ipady=5, ipadx=10)
 
         # ── Stats bar ────────────────────────────────────────────────────
-        self.stats_frame = ctk.CTkFrame(self, fg_color=BG_DARK, height=32)
+        self.stats_frame = tk.Frame(self, bg=BG_DARK, height=32)
         self.stats_frame.grid(row=3, column=0, sticky="ew", padx=20, pady=(6, 4))
 
-        self.stats_label = ctk.CTkLabel(
+        self.stats_label = tk.Label(
             self.stats_frame,
             text="No projects scanned yet.  Select a folder and press Scan.",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            text_color=TEXT_SECONDARY,
+            font=("Segoe UI", 12),
+            fg=TEXT_SECONDARY,
+            bg=BG_DARK,
         )
         self.stats_label.pack(side="left")
 
         # ── Filter bar ───────────────────────────────────────────────────
-        filter_bar = ctk.CTkFrame(self, fg_color=BG_DARK, height=36)
+        filter_bar = tk.Frame(self, bg=BG_DARK, height=36)
         filter_bar.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 6))
 
-        self.filter_var = ctk.StringVar(value="All")
-        for label in ("All", "Named ✓", "Unnamed", "Empty"):
-            ctk.CTkRadioButton(
-                filter_bar,
-                text=label,
-                variable=self.filter_var,
-                value=label,
-                font=ctk.CTkFont(family="Segoe UI", size=12),
-                text_color=TEXT_SECONDARY,
-                fg_color=ACCENT,
-                hover_color=ACCENT_HOVER,
-                command=self._apply_filter,
-            ).pack(side="left", padx=(0, 18))
+        self.filter_var = tk.StringVar(value="All")
+        self.filter_toggle = FilterToggleBar(
+            filter_bar,
+            labels=("All", "Named ✓", "Unnamed", "Empty"),
+            variable=self.filter_var,
+            command=self._apply_filter,
+        )
+        self.filter_toggle.pack(side="left")
 
         # Search
-        self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", self._on_search_change)
-        search_entry = ctk.CTkEntry(
+        self.search_entry = PlaceholderEntry(
             filter_bar,
-            textvariable=self.search_var,
             placeholder_text="🔎  Search projects…",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            height=32,
-            width=220,
-            corner_radius=8,
-            border_color=BORDER_SUBTLE,
-            fg_color=BG_CARD,
-            text_color=TEXT_PRIMARY,
+            font=("Segoe UI", 11),
         )
-        search_entry.pack(side="right")
+        self.search_entry.pack(side="right")
+        self.search_entry.bind("<KeyRelease>", self._on_search_change)
 
         # ── Scrollable results area ──────────────────────────────────────
-        self.scroll_frame = ctk.CTkScrollableFrame(
-            self,
-            fg_color=BG_DARK,
-            corner_radius=0,
-            scrollbar_button_color=BORDER_SUBTLE,
-            scrollbar_button_hover_color=ACCENT,
-        )
+        self.scroll_frame = ScrollableFrame(self)
         self.scroll_frame.grid(row=2, column=0, sticky="nsew", padx=16, pady=(10, 0))
-        self.scroll_frame.grid_columnconfigure(0, weight=1)
+        self.scroll_frame.scrollable_frame.grid_columnconfigure(0, weight=1)
 
         # Welcome placeholder
         self._show_welcome()
 
-    def _on_search_change(self, *args):
+    def _on_search_change(self, event=None):
         if self._search_timer is not None:
             self.after_cancel(self._search_timer)
         self._search_timer = self.after(300, self._apply_filter)
 
     # ── Welcome screen ───────────────────────────────────────────────────
     def _show_welcome(self):
-        for widget in self.scroll_frame.winfo_children():
+        for widget in self.scroll_frame.scrollable_frame.winfo_children():
             widget.destroy()
 
-        welcome = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
-        welcome.grid(row=0, column=0, pady=80)
+        welcome = tk.Frame(self.scroll_frame.scrollable_frame, bg=BG_DARK)
+        welcome.grid(row=0, column=0, pady=80, sticky="n")
 
-        ctk.CTkLabel(
+        tk.Label(
             welcome,
             text="🎹",
-            font=ctk.CTkFont(size=64),
+            font=("Segoe UI", 64),
+            fg=TEXT_PRIMARY,
+            bg=BG_DARK
         ).pack()
-        ctk.CTkLabel(
+        tk.Label(
             welcome,
             text="Welcome to FL Studio Project Name Manager",
-            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
-            text_color=TEXT_PRIMARY,
+            font=("Segoe UI", 20, "bold"),
+            fg=TEXT_PRIMARY,
+            bg=BG_DARK
         ).pack(pady=(10, 4))
-        ctk.CTkLabel(
+        tk.Label(
             welcome,
             text="Select your FL Studio projects folder and click Scan to get started.",
-            font=ctk.CTkFont(family="Segoe UI", size=14),
-            text_color=TEXT_SECONDARY,
+            font=("Segoe UI", 14),
+            fg=TEXT_SECONDARY,
+            bg=BG_DARK
         ).pack()
 
     # ── Actions ──────────────────────────────────────────────────────────
     def _browse_folder(self):
         folder = filedialog.askdirectory(title="Select FL Studio Projects Folder")
         if folder:
-            self.path_var.set(folder)
+            self.path_entry.set_text(folder)
 
     def _refresh_scan(self):
         """Re-scan the same folder (shortcut: F5)."""
-        path = self.path_var.get().strip()
+        path = self.path_entry.get().strip()
         if path and os.path.isdir(path):
             self._start_scan()
 
     def _start_scan(self):
-        path = self.path_var.get().strip()
+        path = self.path_entry.get().strip()
         if not path or not os.path.isdir(path):
             messagebox.showwarning("Invalid Path", "Please select a valid directory first.")
             return
 
         # Disable controls during scan
-        self.scan_btn.configure(state="disabled", text="⏳ Scanning…")
+        self.scan_btn.configure(state="disabled")
+        self.scan_btn.configure(text="⏳ Scanning…")
         self.refresh_btn.configure(state="disabled")
         self.browse_btn.configure(state="disabled")
         self.export_btn.configure(state="disabled")
 
         # Clear current results
-        for widget in self.scroll_frame.winfo_children():
+        for widget in self.scroll_frame.scrollable_frame.winfo_children():
             widget.destroy()
 
         # Run scan in a thread to keep the UI responsive
@@ -429,7 +698,8 @@ class App(ctk.CTk):
         self.after(0, self._display_results)
 
     def _display_results(self):
-        self.scan_btn.configure(state="normal", text="🔍  Scan")
+        self.scan_btn.configure(state="normal")
+        self.scan_btn.configure(text="🔍  Scan")
         self.refresh_btn.configure(state="normal")
         self.browse_btn.configure(state="normal")
 
@@ -444,11 +714,11 @@ class App(ctk.CTk):
 
     def _apply_filter(self):
         """Rebuild the card list based on the current filter and search query."""
-        for widget in self.scroll_frame.winfo_children():
+        for widget in self.scroll_frame.scrollable_frame.winfo_children():
             widget.destroy()
 
         filter_val = self.filter_var.get()
-        search_q = self.search_var.get().strip().lower()
+        search_q = self.search_entry.get().strip().lower()
 
         filtered = []
         for p in self.projects:
@@ -467,15 +737,16 @@ class App(ctk.CTk):
             return
 
         if not filtered:
-            ctk.CTkLabel(
-                self.scroll_frame,
+            tk.Label(
+                self.scroll_frame.scrollable_frame,
                 text="No projects match the current filter.",
-                font=ctk.CTkFont(family="Segoe UI", size=14),
-                text_color=TEXT_SECONDARY,
-            ).grid(row=0, column=0, pady=60)
+                font=("Segoe UI", 14),
+                fg=TEXT_SECONDARY,
+                bg=BG_DARK
+            ).grid(row=0, column=0, pady=60, sticky="n")
         else:
             for i, project in enumerate(filtered, start=1):
-                card = ProjectCard(self.scroll_frame, project, project._original_index)
+                card = ProjectCard(self.scroll_frame.scrollable_frame, project, project._original_index)
                 card.grid(row=i, column=0, sticky="ew", padx=4, pady=4)
 
         # Stats

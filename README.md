@@ -1,9 +1,9 @@
 # 🎛️ FL Studio Project Name Manager
 
-A sleek **CustomTkinter** desktop app that scans your FL Studio project folders and instantly shows you what's inside — no more clicking through dozens of `Project_1`, `Project_2`, `Project_3`… directories just to find your beat names.
+A sleek **Tkinter / TTK** desktop app that scans your FL Studio project folders and instantly shows you what's inside — no more clicking through dozens of `Project_1`, `Project_2`, `Project_3`… directories just to find your beat names.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
-![CustomTkinter](https://img.shields.io/badge/CustomTkinter-5.2+-purple)
+![Tkinter](https://img.shields.io/badge/Tkinter-TTK-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
@@ -63,7 +63,7 @@ python main.py
 
 ```
 FLStudioProjectNameManager/
-├── main.py                 # GUI application (CustomTkinter)
+├── main.py                 # GUI application (Tkinter / TTK)
 ├── fl_project_scanner.py   # Core scanner module
 ├── excel_exporter.py       # Excel export with openpyxl
 ├── requirements.txt        # Python dependencies
@@ -114,7 +114,7 @@ Status cells are color-coded:
 
 ## 🛠️ Built With
 
-- [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) — Modern UI toolkit for Python
+- [Tkinter/TTK](https://docs.python.org/3/library/tkinter.html) — Standard Python GUI toolkit
 - [openpyxl](https://openpyxl.readthedocs.io/) — Excel file generation
 - [Pillow](https://python-pillow.org/) — Image support
 
