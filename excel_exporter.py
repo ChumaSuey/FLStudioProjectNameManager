@@ -97,10 +97,13 @@ def export_to_excel(projects: List[FLProject], output_path: str) -> str:
                 else:
                     cell.fill = EMPTY_FILL
 
-    # ── Auto-fit column widths (approximate) ─────────────────────────────
-    col_widths = [6, 30, 45, 12, 35, 14, 60]
-    for i, w in enumerate(col_widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+    # ── Auto-fit column widths ─────────────────────────────────
+    for col_idx in range(1, len(headers) + 1):
+        max_width = len(str(ws.cell(row=1, column=col_idx).value))
+        for row in range(2, len(projects) + 2):
+            cell_value = str(ws.cell(row=row, column=col_idx).value or "")
+            max_width = max(max_width, len(cell_value))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_width + 3, 80)
 
     # Freeze the header row
     ws.freeze_panes = "A2"

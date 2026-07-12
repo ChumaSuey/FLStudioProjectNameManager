@@ -7,7 +7,7 @@ and checks for rendered audio / MIDI files (mp3, wav, mid, ogg, flac…).
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 
 # Audio / MIDI extensions that indicate a project has been exported / finished
@@ -39,16 +39,20 @@ class FLProject:
         return "Named ✓" if self.has_audio else "Unnamed"
 
     @property
-    def export_names(self) -> list:
-        """Return the stem names of all exported audio/MIDI files."""
-        return [Path(f).stem for f in self.audio_files]
-
-    @property
     def primary_name(self) -> str:
         """Return the 'best' project name (first .flp without extension)."""
         if self.flp_files:
             return Path(self.flp_files[0]).stem
         return self.folder_name
+
+
+def _should_include(proj: FLProject, current_path: Path) -> bool:
+    if proj.flp_files or proj.audio_files:
+        return True
+    try:
+        return not any(current_path.iterdir())
+    except PermissionError:
+        return False
 
 
 def scan_directory(root_path: str, depth: int = 1) -> List[FLProject]:
@@ -73,15 +77,6 @@ def scan_directory(root_path: str, depth: int = 1) -> List[FLProject]:
     if not root.is_dir():
         return projects
 
-    def _should_include(proj: FLProject, current_path: Path) -> bool:
-        if proj.flp_files or proj.audio_files:
-            return True
-        # Include if it's completely empty (a placeholder project folder)
-        try:
-            return not any(current_path.iterdir())
-        except PermissionError:
-            return False
-
     if depth == 0:
         # Scan the root itself as a project
         project = _scan_single_folder(root)
@@ -95,8 +90,7 @@ def scan_directory(root_path: str, depth: int = 1) -> List[FLProject]:
             project = _scan_single_folder(entry)
             if _should_include(project, entry):
                 projects.append(project)
-            # Recurse if depth allows
-            elif depth > 1:
+            if depth > 1:
                 projects.extend(scan_directory(str(entry), depth - 1))
 
     return projects
@@ -112,14 +106,6 @@ def scan_directory_recursive(root_path: str, max_depth: int = 5) -> List[FLProje
 
     if not root.is_dir():
         return projects
-
-    def _should_include(proj: FLProject, current_path: Path) -> bool:
-        if proj.flp_files or proj.audio_files:
-            return True
-        try:
-            return not any(current_path.iterdir())
-        except PermissionError:
-            return False
 
     def _walk(current: Path, current_depth: int):
         if current_depth > max_depth:
