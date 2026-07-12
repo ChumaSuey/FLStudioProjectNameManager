@@ -12,7 +12,7 @@ A sleek **Tkinter / TTK** desktop app that scans your FL Studio project folders 
 
 | Feature | Description |
 |---|---|
-| 📂 **Browse & Scan** | Select your FL Studio projects root folder and scan all subdirectories |
+| 📂 **Browse & Scan** | Select your FL Studio projects folder and scan all subdirectories |
 | 🔄 **Refresh (F5)** | Re-scan the same folder after editing — no need to browse again |
 | 🔍 **Deep Scan** | Recursively search nested folder structures |
 | 🏷️ **Smart Status** | **Named ✓** (has audio/MIDI exports) · **Unnamed** (FLP only) · **Empty** |
@@ -21,6 +21,8 @@ A sleek **Tkinter / TTK** desktop app that scans your FL Studio project folders 
 | 🔎 **Search & Filter** | Live search bar + filter by status (All / Named / Unnamed / Empty) |
 | 📊 **Excel Export** | One-click export to a color-coded `.xlsx` report with summary sheet |
 | 🌙 **Dark Theme** | Beautiful dark UI with hover effects and color-coded status badges |
+| ⚙️ **Default Workspace** | Set a default projects folder — auto-loaded on startup; reset anytime |
+| 🖥️ **Centered Window** | Opens centered on screen for a polished first impression |
 
 ---
 
@@ -59,11 +61,25 @@ python main.py
 
 ---
 
+## ⚙️ Settings
+
+Click the **⚙️** cog icon in the top-right corner to open the settings dialog.
+
+| Setting | Description |
+|---|---|
+| **Default Workspace** | Set a folder to auto-populate the path entry on every launch |
+| **Clear** | Remove the default workspace — back to manual folder selection |
+
+Settings are saved to `~/.fl_project_manager_settings.json` and persist across restarts.
+
+---
+
 ## 📁 Project Structure
 
 ```
 FLStudioProjectNameManager/
-├── main.py                 # GUI application (Tkinter / TTK)
+├── main.py                 # Entry point
+├── GUI.py                  # All Tkinter/TTK widgets + App + SettingsDialog
 ├── fl_project_scanner.py   # Core scanner module
 ├── excel_exporter.py       # Excel export with openpyxl
 ├── requirements.txt        # Python dependencies
@@ -116,7 +132,6 @@ Status cells are color-coded:
 
 - [Tkinter/TTK](https://docs.python.org/3/library/tkinter.html) — Standard Python GUI toolkit
 - [openpyxl](https://openpyxl.readthedocs.io/) — Excel file generation
-- [Pillow](https://python-pillow.org/) — Image support
 
 ---
 

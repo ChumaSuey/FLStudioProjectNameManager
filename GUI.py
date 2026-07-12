@@ -41,7 +41,11 @@ TEXT_PRIMARY   = "#EAEAEA"
 TEXT_SECONDARY = "#8D8DA0"
 BORDER_SUBTLE  = "#2A2A42"
 
-SETTINGS_FILE = Path.home() / ".fl_project_manager_settings.json"
+if getattr(sys, "frozen", False):
+    _BASE_PATH = Path(sys.executable).parent
+else:
+    _BASE_PATH = Path(__file__).parent
+SETTINGS_FILE = _BASE_PATH / ".fl_project_manager_settings.json"
 
 
 class ScrollableFrame(tk.Frame):
